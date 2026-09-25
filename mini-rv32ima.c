@@ -375,7 +375,11 @@ int main( int argc, char ** argv )
 	long long instct = -1;
 	int show_help = 0;
 	int time_divisor = 1;
-	int fixed_update = 1;
+#if !defined(__riscv)
+	int fixed_update = 0;
+#else
+	int fixed_update = 0;
+#endif
 	int do_sleep = 1;
 	int single_step = 0;
 	int dtb_ptr = 0;
@@ -503,16 +507,16 @@ restart:
 			case 0x5555: printf( "POWEROFF@0x%08x%08x\n", core->cycleh, core->cyclel ); return 0; //syscon code for power-off
 			default: printf( "Unknown failure\n" ); break;
 		}
-		if( (rt & 0x7ffff) == 0 )
-		{
-			printf( "." );
-			static int dot_count = 0;
-			if( ++dot_count % 20 == 0 )
-			{
-				printf( "[PC:%08x c:%d cause:%08x epc:%08x tval:%08x]", 
-					core->pc, core->cyclel, core->mcause, core->mepc, core->mtval );
-			}
-		}
+		// if( (rt & 0x7ffff) == 0 )
+		// {
+		// 	printf( "." );
+		// 	static int dot_count = 0;
+		// 	if( ++dot_count % 20 == 0 )
+		// 	{
+		// 		printf( "[PC:%08x c:%d cause:%08x epc:%08x tval:%08x]", 
+		// 			core->pc, core->cyclel, core->mcause, core->mepc, core->mtval );
+		// 	}
+		// }
 	}
 
 	DumpState( core, ram_image);
@@ -609,6 +613,9 @@ static void HandleOtherCSRWrite( uint8_t * image, uint16_t csrno, uint32_t value
 	else if( csrno == 0x139 )
 	{
 		putchar( value ); 
+#if !defined(__riscv)
+		fflush( stdout );
+#endif
 	}
 }
 
@@ -616,8 +623,19 @@ static int32_t HandleOtherCSRRead( uint8_t * image, uint16_t csrno )
 {
 	if( csrno == 0x140 )
 	{
+#if !defined(__riscv)
 		if( !IsKBHit() ) return -1;
 		return ReadKBByte();
+#else
+		if( buffered_char != -1 ) {
+			int c = buffered_char;
+			buffered_char = -1;
+			return c;
+		}
+		int c = getchar();
+		if( c <= 0 ) return -1;
+		return c;
+#endif
 	}
 	return 0;
 }
