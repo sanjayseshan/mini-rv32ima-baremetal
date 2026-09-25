@@ -1,7 +1,7 @@
 typedef unsigned char uint8_t;
-#define ram_amt  0x6000000 //16*1024*1024//1*1024*1024;
+#define ram_amt  0x4000000 // 64MB to match default64mbdtb
 
-uint8_t ram_image[0x6000000] = {0x6f,
+uint8_t ram_image[0x4000000] = {0x6f,
 0x00,
 0xc0,
 0x05,

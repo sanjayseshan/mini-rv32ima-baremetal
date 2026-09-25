@@ -1,0 +1,10 @@
+bintoh
+mini-rv32ima
+mini-rv32ima-intel
+mini-rv32ima-intel.tiny
+mini-rv32ima32.hex
+mini-rv32ima.dump
+*.dtb
+*.bin
+elf2hex/elf2hex
+*.o

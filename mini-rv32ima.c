@@ -1,13 +1,17 @@
 // Copyright 2022 Charles Lohr, you may use this file or any portions herein under any of the BSD, MIT, or CC0 licenses.
 
-// #include <stdio.h>
-// #include <stdint.h>
-// #include <stdlib.h>
+#if !defined(__riscv)
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
-// #include <math.h>
-
-// #include "baremetal.h"
-#include "linux.h"
+#include <stdarg.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#else
+#include <stdarg.h>
 
 typedef signed char int8_t;
 typedef unsigned char uint8_t;
@@ -17,23 +21,35 @@ typedef signed int int32_t;
 typedef unsigned int uint32_t;
 typedef long long int64_t;
 typedef unsigned long long uint64_t;
+typedef unsigned int size_t;
 
+int putchar(int c);
+int getchar(void);
+void exit(int c);
 
-static char digits[] = "0123456789abcdef";
+void *memcpy(void *dest, const void *src, size_t n) {
+	char *d = (char *)dest;
+	const char *s = (const char *)src;
+	for (size_t i = 0; i < n; i++) {
+		d[i] = s[i];
+	}
+	return dest;
+}
 
+int puts(const char *s) {
+	while (*s) {
+		putchar(*s++);
+	}
+	putchar('\n');
+	return 0;
+}
+#endif
 
-#include <stdarg.h>
+// #include "baremetal.h"
+#include "linux.h"
 
-// void * memcpy(void *dest, const void *src, uint32_t n) {
-//     char *d = (char *)dest;
-//     const char *s = (const char *)src;
-//     for (uint32_t i = 0; i < n; i++) {
-//         d[i] = s[i];
-//     }
-//     return dest;
-// }
-
-void printf(const char *format, ...) {
+#if defined(__riscv)
+int printf(const char *format, ...) {
     va_list args;
     va_start(args, format);
 
@@ -70,6 +86,20 @@ void printf(const char *format, ...) {
                   chars_printed+=3;
               }
 
+            } else if (*format == 'x') {
+                format++;
+                unsigned int val = va_arg(args, unsigned int);
+                char hex_str[9];
+                int len = 0;
+                do {
+                    unsigned int nibble = val & 0xF;
+                    hex_str[len++] = (nibble < 10) ? (nibble + '0') : (nibble - 10 + 'a');
+                    val >>= 4;
+                } while (val > 0);
+                for (int i = len - 1; i >= 0; i--) {
+                    putchar(hex_str[i]);
+                    chars_printed++;
+                }
             } else if (*format == 's') {
                 format++;
                 char *str = va_arg(args, char *);
@@ -85,31 +115,40 @@ void printf(const char *format, ...) {
                 int c = va_arg(args, int);
                 putchar(c);
                 chars_printed++;
+            } else if (*format == 'u') {
+                format++;
+                unsigned int num = va_arg(args, unsigned int);
+                char str[12];
+                int len = 0;
+                do {
+                    str[len++] = (num % 10) + '0';
+                    num /= 10;
+                } while (num > 0);
+                for (int i = len - 1; i >= 0; i--) {
+                    putchar(str[i]);
+                    chars_printed++;
+                }
             } else if (*format == 'd' || *format == 'i') {
                 format++;
                 int num = va_arg(args, int);
                 char str[12]; // Enough for -2147483648
                 int len = 0;
-                int is_negative = 0;
+                unsigned int unum;
 
                 if (num < 0) {
-                    is_negative = 1;
-                    num = -num;
+                    putchar('-');
+                    chars_printed++;
+                    unum = (unsigned int)(-(long long)num);
+                } else {
+                    unum = (unsigned int)num;
                 }
 
                 do {
-                    str[len] = (num % 10) + '0';
-					len++;
-                    num /= 10;
-                } while (num > 0);
-
-                if (is_negative) {
-                    putchar('-');
-                    chars_printed++;
-                }
+                    str[len++] = (unum % 10) + '0';
+                    unum /= 10;
+                } while (unum > 0);
 
                 for (int i = len - 1; i >= 0; i--) {
-					// putchar('x');
                     putchar(str[i]);
                     chars_printed++;
                 }
@@ -132,8 +171,6 @@ void printf(const char *format, ...) {
     }
 
     va_end(args);
-	// fflush(stdout);
-
     return chars_printed;
 }
 
@@ -236,6 +273,7 @@ uint64_t strtoll(const char* strSource, char** endptr, int base) {
 
     return result * sign;
 }
+#endif
 
 #include "default64mbdtc.h"
 
@@ -243,22 +281,72 @@ uint64_t strtoll(const char* strSource, char** endptr, int base) {
 int fail_on_all_faults = 0;
 
 static int64_t SimpleReadNumberInt( const char * number, int64_t defaultNumber );
+#if !defined(__riscv)
+static uint64_t GetTimeMicroseconds() {
+	struct timeval tv;
+	gettimeofday( &tv, 0 );
+	return (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+static struct termios oldt;
+static void ResetKeyboardInput() {
+	tcsetattr( 0, TCSANOW, &oldt );
+}
+
+static void CaptureKeyboardInput() {
+	tcgetattr( 0, &oldt );
+	struct termios newt = oldt;
+	newt.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr( 0, TCSANOW, &newt );
+	atexit( ResetKeyboardInput );
+}
+
+static int IsKBHit() {
+	struct timeval tv = { 0, 0 };
+	fd_set fds;
+	FD_ZERO( &fds );
+	FD_SET( 0, &fds );
+	return select( 1, &fds, NULL, NULL, &tv ) > 0;
+}
+
+static int ReadKBByte() {
+	char c;
+	int r = read( 0, &c, 1 );
+	return ( r > 0 ) ? (uint8_t)c : -1;
+}
+#else
 int lasttimex = 0;
 static uint64_t GetTimeMicroseconds() {
-	lasttimex = lasttimex+1;
-	// printf("time %d\n",lasttimex);
+	lasttimex += 100;
 	return lasttimex;
 }
-static void ResetKeyboardInput();
-static void CaptureKeyboardInput();
+static void ResetKeyboardInput() {}
+static void CaptureKeyboardInput() {}
+static int buffered_char = -1;
+static int IsKBHit() {
+	if (buffered_char != -1) return 1;
+	int c = getchar();
+	if (c != 0) {
+		buffered_char = c;
+		return 1;
+	}
+	return 0;
+}
+static int ReadKBByte() {
+	if (buffered_char != -1) {
+		int c = buffered_char;
+		buffered_char = -1;
+		return c;
+	}
+	return getchar();
+}
+#endif
+
 static uint32_t HandleException( uint32_t ir, uint32_t retval );
 static uint32_t HandleControlStore( uint32_t addy, uint32_t val );
 static uint32_t HandleControlLoad( uint32_t addy );
 static void HandleOtherCSRWrite( uint8_t * image, uint16_t csrno, uint32_t value );
 static int32_t HandleOtherCSRRead( uint8_t * image, uint16_t csrno );
-static void MiniSleep();
-static int IsKBHit();
-static int ReadKBByte();
 
 // This is the functionality we want to override in the emulator.
 //  think of this as the way the emulator's processor is connected to the outside world.
@@ -287,7 +375,7 @@ int main( int argc, char ** argv )
 	long long instct = -1;
 	int show_help = 0;
 	int time_divisor = 1;
-	int fixed_update = 0;
+	int fixed_update = 1;
 	int do_sleep = 1;
 	int single_step = 0;
 	int dtb_ptr = 0;
@@ -362,7 +450,7 @@ restart:
 		
 	}
 
-	// CaptureKeyboardInput();
+	CaptureKeyboardInput();
 
 	// The core lives at the end of RAM.
 	core = (struct MiniRV32IMAState *)(ram_image + ram_amt - sizeof( struct MiniRV32IMAState ));
@@ -371,19 +459,25 @@ restart:
 	core->regs[11] = dtb_ptr?(dtb_ptr+MINIRV32_RAM_IMAGE_OFFSET):0; //dtb_pa (Must be valid pointer) (Should be pointer to dtb)
 	core->extraflags |= 3; // Machine-mode.
 
-		// Update system ram size in DTB (but if and only if we're using the default DTB)
-		// Warning - this will need to be updated if the skeleton DTB is ever modified.
+	// Update system ram size in DTB (but if and only if we're using the default DTB)
+	// Warning - this will need to be updated if the skeleton DTB is ever modified.
 	uint32_t * dtb = (uint32_t*)(ram_image + dtb_ptr);
+	printf("dtb[0x13c/4]=%08x\n", dtb[0x13c/4]);
 	if( dtb[0x13c/4] == 0x00c0ff03 )
 	{
 		uint32_t validram = dtb_ptr;
 		dtb[0x13c/4] = (validram>>24) | ((( validram >> 16 ) & 0xff) << 8 ) | (((validram>>8) & 0xff ) << 16 ) | ( ( validram & 0xff) << 24 );
+		printf("dtb ram updated to %08x\n", dtb[0x13c/4]);
+	}
+	else
+	{
+		printf("dtb ram NOT updated!\n");
 	}
 
 	// Image is loaded.
 	uint64_t rt;
-	uint64_t lastTime = (fixed_update)?0:(GetTimeMicroseconds()/time_divisor);//
-	int instrs_per_flip = 1;// single_step?1:1024;
+	uint64_t lastTime = (fixed_update)?0:(GetTimeMicroseconds()/time_divisor);
+	int instrs_per_flip = single_step ? 1 : 1024;
 	for( rt = 0; rt < instct+1 || instct < 0; rt += instrs_per_flip )
 	{
 		uint64_t * this_ccount = ((uint64_t*)&core->cyclel);
@@ -408,6 +502,16 @@ restart:
 			case 0x7777: goto restart;	//syscon code for restart
 			case 0x5555: printf( "POWEROFF@0x%08x%08x\n", core->cycleh, core->cyclel ); return 0; //syscon code for power-off
 			default: printf( "Unknown failure\n" ); break;
+		}
+		if( (rt & 0x7ffff) == 0 )
+		{
+			printf( "." );
+			static int dot_count = 0;
+			if( ++dot_count % 20 == 0 )
+			{
+				printf( "[PC:%08x c:%d cause:%08x epc:%08x tval:%08x]", 
+					core->pc, core->cyclel, core->mcause, core->mepc, core->mtval );
+			}
 		}
 	}
 
@@ -436,12 +540,12 @@ static uint32_t HandleException( uint32_t ir, uint32_t code )
 
 static uint32_t HandleControlStore( uint32_t addy, uint32_t val )
 {
-	// printf("here\n");
 	if( addy == 0x10000000 ) //UART 8250 / 16550 Data Buffer
 	{
 		printf( "%c", val );
-		// fflush(stdout);
-
+#if !defined(__riscv)
+		fflush( stdout );
+#endif
 	}
 	else if( addy == 0x11004004 ) //CLNT
 		core->timermatchh = val;
@@ -459,12 +563,10 @@ static uint32_t HandleControlStore( uint32_t addy, uint32_t val )
 static uint32_t HandleControlLoad( uint32_t addy )
 {
 	// Emulating a 8250 / 16550 UART
-	// printf("here2\n");
-
 	if( addy == 0x10000005 )
-		return 0x60 | 0;//IsKBHit();
-	else if( addy == 0x10000000 && 1)//IsKBHit() )
-		return getchar();//ReadKBByte();
+		return 0x60 | (IsKBHit() ? 1 : 0);
+	else if( addy == 0x10000000 && IsKBHit() )
+		return ReadKBByte();
 	else if( addy == 0x1100bffc ) // https://chromitem-soc.readthedocs.io/en/latest/clint.html
 		return core->timerh;
 	else if( addy == 0x1100bff8 )
@@ -514,10 +616,8 @@ static int32_t HandleOtherCSRRead( uint8_t * image, uint16_t csrno )
 {
 	if( csrno == 0x140 )
 	{
-		// if( !IsKBHit() ) return -1;
-		char x = getchar();
-		if (x==0) return -1;
-		return getchar();//ReadKBByte();
+		if( !IsKBHit() ) return -1;
+		return ReadKBByte();
 	}
 	return 0;
 }

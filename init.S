@@ -41,7 +41,7 @@ _start:
   li  x30,0
   li  x31,0
 
-  li sp, 0xFFFFFF00
+  la sp, _sstack
 
   call main
 

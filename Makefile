@@ -18,18 +18,21 @@ else
 endif
 
 
-RISCVCC32=/home/seshan/Downloads/rv32i/bin/riscv32-unknown-elf-gcc  -march=rv32i -mabi=ilp32 -static -nostdlib -nostartfiles -mcmodel=medany -lgcc -Os -ffunction-sections -fdata-sections -Wl,--gc-sections -fwhole-program -s
+RISCVCC32 ?= riscv64-unknown-elf-gcc
+RISCV_CFLAGS ?= -march=rv32i -mabi=ilp32 -static -nostdlib -nostartfiles -mcmodel=medany -fno-builtin -Os -ffunction-sections -fdata-sections -Wl,--gc-sections -s
+LIBGCC := $(shell $(RISCVCC32) -march=rv32i -mabi=ilp32 -print-libgcc-file-name)
+
 init32.o: init.S
-	$(RISCVCC32) -c init.S -o init32.o
+	$(RISCVCC32) $(RISCV_CFLAGS) -c init.S -o init32.o
 
 mmio32.o: mmio.c
-	$(RISCVCC32) -c mmio.c -o mmio32.o
+	$(RISCVCC32) $(RISCV_CFLAGS) -c mmio.c -o mmio32.o
 
-mini-rv32ima : mini-rv32ima.c mini-rv32ima.h default64mbdtc.h
+mini-rv32ima : mini-rv32ima.c mini-rv32ima.h default64mbdtc.h init32.o mmio32.o
 	# for debug
-	$(RISCVCC32) -O2 -c $< -o intermediate32.o
-	$(RISCVCC32) -o $@ -Tmmio.ld intermediate32.o init32.o mmio32.o /home/seshan/Downloads/rv32i/lib/gcc/riscv32-unknown-elf/12.1.0/libgcc.a
-	$(ELF2HEX)/elf2hex  $@ 0 16G  $@32.hex
+	$(RISCVCC32) $(RISCV_CFLAGS) -O2 -c $< -o intermediate32.o
+	$(RISCVCC32) $(RISCV_CFLAGS) -o $@ -Tmmio.ld intermediate32.o init32.o mmio32.o $(LIBGCC)
+	$(ELF2HEX)/elf2hex  $@ 0 128M  $@32.hex
 	./generate_dump.sh
 
 	# $(ELF2HEX)/elf2hex $(BUILDDIR)/$*32 0 16G $(BUILDDIR)/$*32.hex

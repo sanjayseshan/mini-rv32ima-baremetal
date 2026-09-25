@@ -26,7 +26,7 @@ SECTIONS
       _eheap = .;
     }
 
-    . = ALIGN(0xffffff00);
+    . = ALIGN(0x1000);
     .stack :
     {
       . = ALIGN(4);

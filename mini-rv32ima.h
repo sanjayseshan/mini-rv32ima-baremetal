@@ -2,7 +2,9 @@
 
 #ifndef _MINI_RV32IMAH_H
 #define _MINI_RV32IMAH_H
-#define INT32_MIN -1
+#ifndef INT32_MIN
+#define INT32_MIN (-2147483647 - 1)
+#endif
 
 /**
     To use mini-rv32ima.h for the bare minimum, the following:
@@ -426,9 +428,13 @@ MINIRV32_STEPPROTO
 								trap = (3+1); break; // EBREAK 3 = "Breakpoint"
 							case 0x105: //WFI (Wait for interrupts)
 								CSR( mstatus ) |= 8;    //Enable interrupts
-								CSR( extraflags ) |= 4; //Infor environment we want to go to sleep.
+								// In emulation without wall-clock sleep, fire timer interrupt if match is reached or don't stall indefinitely:
+								if( ( CSR( timerh ) > CSR( timermatchh ) || ( CSR( timerh ) == CSR( timermatchh ) && CSR( timerl ) >= CSR( timermatchl ) ) ) && ( CSR( timermatchh ) || CSR( timermatchl ) ) )
+								{
+									CSR( mip ) |= 1<<7;
+								}
 								SETCSR( pc, pc + 4 );
-								return 1;
+								return 0;
 							default:
 								trap = (2+1); break; // Illegal opcode.
 							}
@@ -489,6 +495,11 @@ MINIRV32_STEPPROTO
 
 			// If there was a trap, do NOT allow register writeback.
 			if( trap ) {
+				static int trap_print_budget = 5;
+				if( trap_print_budget > 0 ) {
+					trap_print_budget--;
+					printf("\n[TRAP pc=%08x ir=%08x trap=%d rval=%08x sp=%08x s1=%08x]\n", pc, ir, trap, rval, REG(2), REG(9));
+				}
 				SETCSR( pc, pc );
 				MINIRV32_POSTEXEC( pc, ir, trap );
 				break;
